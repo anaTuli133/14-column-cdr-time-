@@ -1,4 +1,4 @@
-# CDR14 - Call Detail Record Portal
+## CDR14 - Call Detail Record Portal
 
 A Flask web app for searching telecom CDR (Call Detail Record) data from an Oracle database. Results are shown in a table and can be downloaded as CSV.
 
