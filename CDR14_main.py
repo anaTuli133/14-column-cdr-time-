@@ -1,12 +1,19 @@
 import oracledb
 import pandas as pd
 
-# ==================== ORACLE CONNECTION ====================
+# ==================== ORACLE CONNECTIONS ====================
 def get_connection():
     return oracledb.connect(
         user="dwh_user03",
         password="dwh_user_123",
         dsn="192.168.61.204/dwhdb03"
+    )
+
+def imei_connection():
+    return oracledb.connect(
+        user="dwh_user",
+        password="dwh_user_123",
+        dsn="192.168.61.16:1521/datadb01"
     )
 
 # ==================== BASE SQL (14-col) ====================
@@ -52,8 +59,7 @@ def _run_query(values, start_date, end_date, filter_col, start_time="00:00", end
 
     placeholders = ", ".join([f":val{i}" for i in range(len(values))])
     sql = BASE_SQL.format(filter_col=filter_col, placeholders=placeholders)
-
-    # binds ডিকশনারিতে অবশ্যই সব ভেরিয়েবল থাকতে হবে
+  
     binds = {
         "start_date": start_date, 
         "end_date": end_date,
@@ -82,7 +88,6 @@ def fetch_14column_cdr(msisdns, start_date, end_date, start_time="00:00", end_ti
     return _run_query(msisdns, start_date, end_date, 
                       filter_col="M.M04_MSISDNAPARTY", 
                       start_time=start_time, end_time=end_time)
-
 
 def fetch_cgi_cdr(cgis, start_date, end_date, start_time="00:00", end_time="23:59"):
     return _run_query(cgis, start_date, end_date, 
@@ -144,3 +149,96 @@ def fetch_retailer_cdr(msisdn, start_date, end_date, start_time="00:00", end_tim
     finally:
         cur.close()
         conn.close()
+
+# ========================= MSISDN <--> IMEI ==============================
+
+def fetch_msisdn_to_imei(msisdn):
+
+    TAB_SQL = """
+    SELECT MSISDN, IMEI, IMSI
+    FROM IMEI_TRIPLET
+    WHERE MSISDN = :msisdn
+    """
+
+    binds = {
+        "msisdn": msisdn
+    }
+
+    conn = imei_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(TAB_SQL, binds)
+        cols = [c[0] for c in cur.description]
+        rows = cur.fetchall()
+        return pd.DataFrame(rows, columns=cols)
+    finally:
+        cur.close()
+        conn.close()
+
+#-------------------------------------------------------------------------------------------
+
+def fetch_imei_to_msisdn(imei):
+    TAB_SQL = """
+    SELECT MSISDN, IMEI, IMSI
+    FROM IMEI_TRIPLET
+    WHERE IMEI = :IMEI
+    """
+
+    binds = {
+        "imei":     imei
+    }
+
+    conn = imei_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(TAB_SQL, binds)
+        cols = [c[0] for c in cur.description]
+        rows = cur.fetchall()
+        return pd.DataFrame(rows, columns=cols)
+    except Exception as e:
+        print(f"Error: {e}")
+        return pd.DataFrame()
+    finally:
+        cur.close()
+        conn.close()
+
+#================================== Date Fromatting =======================================
+
+def clean_date(value):
+    if not value or str(value).strip() == "":
+        return None
+    try:
+        return pd.to_datetime(value)
+    except Exception:
+        return None
+
+def safe_date_range(start_date, end_date):
+    if not start_date or not end_date:
+        raise ValueError("Start and end date are required")
+
+    start = pd.to_datetime(start_date, errors='coerce')
+    end = pd.to_datetime(end_date, errors='coerce')
+
+    if pd.isna(start) or pd.isna(end):
+        raise ValueError("Invalid date format")
+
+    return pd.date_range(start=start, end=end)
+
+def expand_by_date(df, start_date, end_date):
+    if df.empty:
+        return df
+
+    date_range = safe_date_range(start_date, end_date)[::-1]
+
+    expanded_rows = []
+
+    for _, row in df.iterrows():
+        for d in date_range:
+            expanded_rows.append({
+                "DATE_VALUE": d.strftime("%d/%m/%Y"),
+                "MSISDN": row["MSISDN"],
+                "IMEI": row["IMEI"],
+                "IMSI": row["IMSI"]
+            })
+
+    return pd.DataFrame(expanded_rows)

@@ -2,10 +2,13 @@ from flask import Flask, render_template, request, send_file
 import io
 from CDR14_main import (
     fetch_14column_cdr,
+    fetch_msisdn_to_imei,
+    fetch_imei_to_msisdn,
     fetch_lac_cell_cdr,
     fetch_cgi_cdr,
     fetch_foreign_cdr,
     fetch_retailer_cdr,
+    expand_by_date
 )
 
 app = Flask(__name__)
@@ -35,6 +38,8 @@ def make_filename(prefix, identifier, start_date, start_time, end_date, end_time
     et = end_time.replace(":", "")
     return f"{prefix}_{identifier}_{start_date}_{st}_{end_date}_{et}.csv"
 
+def make_filenameNT(prefix, identifier, start_date, end_date):
+    return f"{prefix}_{identifier}_{start_date}_{end_date}.csv"
 
 # ==================== HELPER: Save + render table ====================
 def render_result(df, prefix, identifier, start_date, start_time, end_date, end_time):
@@ -45,6 +50,13 @@ def render_result(df, prefix, identifier, start_date, start_time, end_date, end_
     latest_filename = make_filename(prefix, identifier, start_date, start_time, end_date, end_time)
     return df.to_html(index=False, classes="data-table")
 
+def render_resultNT(df, prefix, identifier, start_date, end_date):
+    global latest_df, latest_filename
+    if df.empty:
+        return "<p>No records found.</p>"
+    latest_df = df
+    latest_filename = make_filenameNT(prefix, identifier, start_date, end_date)
+    return df.to_html(index=False, classes="data-table")
 
 # ==================== 14 COLUMN CDR (A-Party) ====================
 @app.route("/", methods=["GET", "POST"])
@@ -189,15 +201,55 @@ def retailer_location():
     return render_template("CDR14_retailer_location.html", table=table_html)
 
 
-# # ==================== MSISDN <-> IMEI (placeholder) ====================
-# @app.route("/msisdn_to_imei", methods=["GET", "POST"])
-# def msisdn_to_imei():
-#     return render_template("msisdn_to_imei.html", result=None)
+# # ==================== MSISDN <-> IMEI ====================
 
-# @app.route("/imei_to_msisdn", methods=["GET", "POST"])
-# def imei_to_msisdn():
-#     return render_template("imei_to_msisdn.html", result=None)
+@app.route("/msisdn_to_imei", methods=["GET", "POST"])
+def msisdn_to_imei():
+    table_html = None
 
+    if request.method == "POST":
+        msisdn = request.form.get("MSISDN", "").strip()
+        start_date = request.form.get("start")
+        end_date = request.form.get("end")
+    
+        if not msisdn:
+            table_html = "<p style='color:red'>Enter MSISDN</p>"
+        else:
+            try:
+                df = fetch_msisdn_to_imei(msisdn)
+                df = expand_by_date(df, start_date, end_date)
+                table_html = render_resultNT(
+                    df, "MSISDN_IMEI", msisdn,
+                    start_date, end_date
+                )
+            except Exception as e:
+                table_html = f"<p style='color:red'>Error: {e}</p>"
+    return render_template("CDR14_msisdn_to_imei.html", table=table_html)
+
+#----------------------------------------------------------------------------------------------
+
+@app.route("/imei_to_msisdn", methods=["GET", "POST"])
+def imei_to_msisdn():
+    table_html = None
+
+    if request.method == "POST":
+        imei = request.form.get("IMEI", "").strip()
+        start_date = request.form.get("start", "")
+        end_date = request.form.get("end", "")
+
+        if not imei:
+            table_html = "<p style='color:red'>Enter IMEI</p>"
+        else:
+            try:
+                df = fetch_imei_to_msisdn(imei)
+                df = expand_by_date(df, start_date, end_date)
+                table_html = render_resultNT(
+                    df, "IMEI_MSISDN", imei,
+                    start_date, end_date
+                )
+            except Exception as e:
+                table_html = f"<p style='color:red'>Error: {e}</p>"
+    return render_template("CDR14_imei_to_msisdn.html", table=table_html)
 
 # ==================== DOWNLOAD CSV ====================
 @app.route("/download_csv")
